@@ -63,14 +63,12 @@ class Helper {
     getWords(word) {
         let regex = word.replace(/_/g, '\\w');
         let filterRegex = new RegExp(regex, 'g');
-        console.log(filterRegex);
         let words = [];
         if (this.$dictionary[word.length] !== undefined) {
             this.$dictionary[word.length].forEach(function(entry) {
                 if (entry.match(filterRegex))
                     words.push(entry);
             });
-            console.log(words);
         }
         return words;
     }

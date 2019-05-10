@@ -7,12 +7,15 @@ window.addEventListener('helperPostInit', function() {
 
 class Helper {
     constructor() {
+        this.$timeoutList = [];
         this.$autoRestart = true;
         // Arrays containing k/v pairs.
         this.$commands;
         this.$dictionary;
         // Pointers to HTML objects.
         this.$helper;
+        this.$options;
+        this.$wordOverlay;
         this.$hintList;
         this.$triedList;
         this.$inputChat = $('#inputChat')[0];
@@ -23,8 +26,8 @@ class Helper {
         this.$selectWord = $('#overlay > .content > .wordContainer')[0];
         // Retrieve locally stored data, if possible.
         this.$commands = JSON.parse(localStorage.getItem('$commands'))
-                || { 'arabic': `﷽`.repeat(100), 'greek': `ௌ`.repeat(100) };
-        this.$dictionary = JSON.parse(localStorage.getItem('$dictionary')) || {};
+        || { 'arabic': `﷽`.repeat(100), 'greek': `ௌ`.repeat(100) };
+        this.$dictionary = JSON.parse(localStorage.getItem('$dictionary')) || [];
         this.$triedWords = new Set();
         // Initialise overlay.
         this.initOverlay();
@@ -66,6 +69,9 @@ class Helper {
                 this.autoStart();
             }
         });
+        this.$chatObserver = this.observeDOMObject(this.$formChat, target => {
+            console.log(target);
+        });
         if (this.$autoRestart && this.$screenLogin.style.display !== 'none') {
             this.autoStart();
         }
@@ -77,6 +83,17 @@ class Helper {
         (async () => {
             await wait(2000);
             $('#formLogin > button')[0].click();
+            await wait(1000);
+            let arabic = localStorage.getItem('carabic');
+            if (arabic == 'true') {
+                $('#helperOptions > div > input[name=arabic]').prop('checked', true);
+                this.printCommand('arabic');
+            }
+            let greek = localStorage.getItem('cgreek');
+            if (greek == 'true') {
+                $('#helperOptions > div > input[name=greek]').prop('checked', true);
+                this.printCommand('greek');
+            }
         })();
     }
 
@@ -124,35 +141,112 @@ class Helper {
 
     initOverlay() {
         this.$helper = $('<div>', { id: 'helperOverlay' });
+        this.$options = $('<div>', { id: 'helperOptions' });
+        this.$wordOverlay = $('<div>', { id: 'helperWordOverlay' });
+        this.$hintList = $('<div>', { id: 'helperHintList' });
+        this.$triedList = $('<div>', { id: 'helperTriedList' });
+
+        this.$helper.append(this.$options);
+        this.$wordOverlay.append(this.$hintList);
+        this.$wordOverlay.append(this.$triedList);
+        this.$helper.append(this.$wordOverlay);
+        $('body').append(this.$helper);
+
         this.$helper.css({
             'position': 'fixed',
             'top': '0rem',
             'right': '0rem',
-            'width': '32rem',
             'height': '100%',
+            'width': '48rem',
             'padding': '0px',
             'background-color': 'rgba(100, 0, 150, 255)',
             'color': 'rgba(255, 255, 0, 255)',
             'display': 'flex',
+            'flex-direction': 'row' });
+        this.$options.css({
+            'display': 'flex',
+            'height': '100%',
+            'flex-grow': '2',
             'flex-direction': 'column' });
-        this.$options = $('<div>', { id: 'helperOptions' });
-        this.$helper.append(this.$options);
-        this.$hintList = $('<div>', { id: 'helperHintList' });
+        this.$wordOverlay.css({
+            'display': 'flex',
+            'height': '100%',
+            'flex-grow': '3',
+            'flex-direction': 'column' });
         this.$hintList.css({
             'display': 'flex',
             'flex-basis': '100%',
             'flex-shrink': '1',
             'flex-direction': 'column',
             'overflow': 'auto' });
-        this.$helper.append(this.$hintList);
-        this.$triedList = $('<div>', { id: 'helperTriedList' });
         this.$triedList.css({
             'display': 'flex',
             'max-height': '12rem',
             'flex-grow': '1',
             'flex-direction': 'column' });
-        this.$helper.append(this.$triedList);
-        $('body').append(this.$helper);
+
+        let $arabic = this.addOptionNode('arabic');
+        let $greek = this.addOptionNode('greek');
+
+        this.$options.append($arabic);
+        this.$options.append($greek);
+    }
+
+    printCommand(command) {
+        this.$timeoutList[command] = setTimeout(() => {
+            let temp = this.$inputChat.value;
+            this.$inputChat.value = this.$commands[command];
+            var ev = document.createEvent('Event');
+            ev.initEvent('submit');
+            formChat.dispatchEvent(ev);
+            this.$inputChat.value = temp;
+            this.$inputChat.focus();
+            this.$inputChat.select();
+            this.printCommand(command);
+        }, 1500);
+    }
+
+    addOptionNode(command) {
+        let $optionContainer = $('<div>');
+        let $optionLabelContainer = $('<div>');
+        let $optionLabel = $('<p>');
+        let $optionInput = $('<input>', {
+            type: 'checkbox',
+            name: command,
+            value: this.$commands[command] });
+
+        $optionInput.click(() => {
+            // Create async timer
+            if ($optionInput.is(':checked')) {
+                this.printCommand(command);
+                localStorage.setItem('c' + command, true);
+            } else {
+                clearTimeout(this.$timeoutList[command]);
+                localStorage.setItem('c' + command, false);
+            }
+        });
+
+        $optionLabel.text(command);
+        $optionLabelContainer.append($optionLabel);
+        $optionContainer.append($optionLabelContainer);
+        $optionContainer.append($optionInput);
+
+        $optionContainer.css({
+            'display': 'flex',
+            'flex-direction': 'row' });
+        $optionLabelContainer.css({
+            'flex-grow': '1',
+            'text-align': 'center' });
+        $optionLabel.css({
+            'position': 'relative',
+            'top': '50%',
+            'transform': 'translateY(-50%)' });
+        $optionInput.css({
+            'height': '3rem',
+            'width': '3rem',
+            'margin': '0' });
+
+        return $optionContainer;
     }
 
     addHintNode(word, tried) {
@@ -239,6 +333,8 @@ class Helper {
         ev.initEvent('submit');
         formChat.dispatchEvent(ev);
         this.$inputChat.value = temp;
+        this.$inputChat.focus();
+        this.$inputChat.select();
     }
 
     observeDOMNode(domNodeObj, callback) {

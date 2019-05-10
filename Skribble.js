@@ -7,27 +7,41 @@ window.addEventListener('helperPostInit', function() {
 
 class Helper {
     constructor() {
+        this.$autoRestart = true;
+        // Arrays containing k/v pairs.
         this.$commands;
         this.$dictionary;
+        // Pointers to HTML objects.
         this.$helper;
         this.$hintList;
+        this.$triedList;
         this.$inputChat = $('#inputChat')[0];
         this.$formChat = $('#formChat')[0];
         this.$currentWord = $('#currentWord')[0];
         this.$solutionWord = $('#overlay > .content > .text')[0];
+        this.$screenLogin = $('#screenLogin')[0];
         this.$selectWord = $('#overlay > .content > .wordContainer')[0];
+        // Retrieve locally stored data, if possible.
         this.$commands = JSON.parse(localStorage.getItem('$commands'))
                 || { 'arabic': `﷽`.repeat(100), 'greek': `ௌ`.repeat(100) };
-        this.$dictionary = JSON.parse(localStorage.getItem('$dictionary')) || {}; 
+        this.$dictionary = JSON.parse(localStorage.getItem('$dictionary')) || {};
+        this.$triedWords = new Set();
+        // Initialise overlay.
         this.initOverlay();
+        // Setup observers for objects to observe.
         this.$currentWordObserver = this.observeDOMNode(this.$currentWord, target => {
             let underscoreCount = target.innerHTML.split('_').length - 1;
             if (underscoreCount > 0) {
                 this.$hintList.empty();
+                this.$triedList.empty();
                 let words = this.getWords(target.innerHTML);
                 if (words !== undefined) {
                     words.forEach(word => {
-                        this.addHintNode(word);
+                        if (this.$triedWords.has(word['word']) === false) {
+                            this.addHintNode(word, false);
+                        } else {
+                            this.addHintNode(word, true);
+                        }
                     });
                 }
             }
@@ -36,9 +50,7 @@ class Helper {
             let textPhrase = target.innerHTML;
             if (textPhrase === 'Choose a word') {
                 this.ownRound = true;
-                for (let i = 0; i < this.$selectWord.children.length; i++) {
-                    this.addWord(this.$selectWord.children[i].innerHTML);
-                }
+                // Add words to dictioanry.
             } else if (textPhrase.startsWith('The word was: ')) {
                 if (this.ownRound) {
                     this.ownRound = false;
@@ -46,16 +58,43 @@ class Helper {
                     let word = textPhrase.split('The word was: ').pop();
                     this.addWord(word);
                 }
+                this.$triedWords = new Set();
             }
         });
+        this.$screenLoginObserver = this.observeDOMObject(this.$screenLogin, target => {
+            if (target.style.display !== 'none' && this.$autoRestart) {
+                this.autoStart();
+            }
+        });
+        if (this.$autoRestart && this.$screenLogin.style.display !== 'none') {
+            this.autoStart();
+        }
         window.dispatchEvent(helperPostInit);
+    }
+
+    autoStart() {
+        let wait = ms => new Promise((r, j) => setTimeout(r, ms));
+        (async () => {
+            await wait(2000);
+            $('#formLogin > button')[0].click();
+        })();
     }
 
     addWord(word) {
         if (this.$dictionary[word.length] === undefined)
             this.$dictionary[word.length] = [];
-        if (this.$dictionary[word.length].indexOf(word) === -1) {
-            this.$dictionary[word.length].push(word);
+        let result = this.$dictionary[word.length].some(element => {
+            if (element['word'] === word) {
+                element['frequency'] = element['frequency'] + 1;
+                (async () => {
+                    await this.sort(this.$dictionary[word.length]);
+                })();
+                return true;
+            }
+            return false;
+        });
+        if (result === false) {
+            this.$dictionary[word.length].push({ 'word': word, 'frequency': 1 });
             this.save();
         }
     }
@@ -66,16 +105,26 @@ class Helper {
         let words = [];
         if (this.$dictionary[word.length] !== undefined) {
             this.$dictionary[word.length].forEach(function(entry) {
-                if (entry.match(filterRegex))
+                if (entry['word'].match(filterRegex))
                     words.push(entry);
             });
         }
         return words;
     }
 
+    save() {
+        localStorage.setItem('$commands', JSON.stringify(this.$commands));
+        localStorage.setItem('$dictionary', JSON.stringify(this.$dictionary));
+    }
+
+    async sort(array) {
+        array.sort(function(a, b) { return b['frequency'] - a['frequency']; });
+        this.save();
+    }
+
     initOverlay() {
         this.$helper = $('<div>', { id: 'helperOverlay' });
-        this.$helper.css({ 
+        this.$helper.css({
             'position': 'fixed',
             'top': '0rem',
             'right': '0rem',
@@ -89,19 +138,98 @@ class Helper {
         this.$options = $('<div>', { id: 'helperOptions' });
         this.$helper.append(this.$options);
         this.$hintList = $('<div>', { id: 'helperHintList' });
+        this.$hintList.css({
+            'display': 'flex',
+            'flex-basis': '100%',
+            'flex-shrink': '1',
+            'flex-direction': 'column',
+            'overflow': 'auto' });
         this.$helper.append(this.$hintList);
+        this.$triedList = $('<div>', { id: 'helperTriedList' });
+        this.$triedList.css({
+            'display': 'flex',
+            'max-height': '12rem',
+            'flex-grow': '1',
+            'flex-direction': 'column' });
+        this.$helper.append(this.$triedList);
         $('body').append(this.$helper);
     }
 
-    addHintNode(word) {
-        let $button = $('<div>', { class: 'hintWord' });
-        $button.text(word);
-        $button.css({ 
-            'height' : '3rem',
-            'margin' : '0.5rem',
-            'background-color': 'rgba(80, 0, 130, 255)' });
-        $button.click(() => { this.insertHint(word); });
-        this.$hintList.append($button);
+    addHintNode(word, tried) {
+        let $holder = $('<div>', { class: 'hintHolder' });
+        let $word = $('<div>', { class: 'hintWord' });
+        let $freq = $('<div>', { class: 'hintFreq' });
+
+        $word.html('<p>' + word['word'] + '</p>');
+        $freq.html('<p>' + word['frequency'] + '</p>');
+        $holder.append($word);
+        $holder.append($freq);
+
+        $holder.click(() => {
+            this.insertHint(word['word']);
+            this.$triedWords.add(word['word']);
+            this.setTriedWord($holder, $word, $freq);
+            this.$triedList.append($holder);
+        });
+
+        if (tried) {
+            this.setTriedWord($holder, $word, $freq);
+            this.$triedList.append($holder);
+        } else {
+            this.unsetTriedWord($holder, $word, $freq);
+            this.$hintList.append($holder);
+        }
+        $('.hintHolder > * > p').css({
+            'position': 'relative',
+            'top': '50%',
+            'transform': 'translateY(-50%)' });
+    }
+
+    setTriedWord(a, b, c) {
+        a.css({
+            'display': 'flex',
+            'background-color': 'rgba(255, 255, 255, 255)'
+        });
+        b.css({
+            'flex-grow': '1',
+            'height': '3rem',
+            'border': '0.1rem',
+            'border-style': 'solid',
+            'text-align': 'center',
+            'color': 'rgba(169, 169, 169, 255)',
+            'background-color': 'rgba(80, 0, 0, 255)',
+            'border-color': 'rgba(255, 255, 0, 255)' });
+        c.css({
+            'flex-basis': '15%',
+            'height': '3rem',
+            'border': '0.1rem',
+            'border-style': 'solid',
+            'text-align': 'center',
+            'color': 'rgba(169, 169, 169, 255)',
+            'background-color': 'rgba(80, 0, 0, 255)',
+            'border-color': 'rgba(255, 255, 0, 255)' });
+    }
+
+    unsetTriedWord(a, b, c) {
+        a.css({
+            'display': 'flex',
+            'background-color': 'rgba(255, 255, 255, 255)' });
+        b.css({
+            'flex-grow': '1',
+            'height': '3rem',
+            'border': '0.1rem',
+            'border-style': 'solid',
+            'text-align': 'center',
+            'background-color': 'rgba(80, 0, 130, 255)',
+            'border-color': 'rgba(255, 255, 0, 255)' });
+        c.css({
+            'flex-basis': '15%',
+            'height': '3rem',
+            'border': '0.1rem',
+            'border-style': 'solid',
+            'text-align': 'center',
+            'background-color': 'rgba(80, 0, 130, 255)',
+            'border-color': 'rgba(255, 255, 0, 255)' });
     }
 
     insertHint(word) {
@@ -113,11 +241,6 @@ class Helper {
         this.$inputChat.value = temp;
     }
 
-    save() {
-        localStorage.setItem('$commands', JSON.stringify(this.$commands));
-        localStorage.setItem('$dictionary', JSON.stringify(this.$dictionary));
-    }
-
     observeDOMNode(domNodeObj, callback) {
         let obs = new MutationObserver((mutations, observer) => {
             if (mutations[0].addedNodes.length || mutations[0].removedNodes.length) {
@@ -125,6 +248,14 @@ class Helper {
             }
         });
         obs.observe(domNodeObj, { childList: true, subtree: true });
+        return obs;
+    }
+
+    observeDOMObject(domNodeObj, callback) {
+        let obs = new MutationObserver((mutations, observer) => {
+            callback(mutations[0].target);
+        });
+        obs.observe(domNodeObj, { attributes: true, attributeFilter: ['style'] });
         return obs;
     }
 }
